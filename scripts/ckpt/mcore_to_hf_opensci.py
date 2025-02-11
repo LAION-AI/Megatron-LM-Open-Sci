@@ -25,7 +25,7 @@ import numpy as np
 import torch
 from huggingface_hub import save_torch_state_dict
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
-from transformers.modeling_utils import WEIGHTS_INDEX_NAME, WEIGHTS_NAME, shard_checkpoint
+from transformers.modeling_utils import WEIGHTS_INDEX_NAME, WEIGHTS_NAME
 
 
 @torch.inference_mode()
@@ -116,6 +116,8 @@ tensor_parallel_params_mg = [
     # megatron-lm layers to merge across tp ranks
     'self_attention.linear_proj.weight',
     'self_attention.linear_qkv.weight',
+    'self_attention.linear_proj.bias',
+    'self_attention.linear_qkv.bias',
 ]
 
 column_split_tensor_parallel_params_mg = ['self_attention.linear_proj']
@@ -303,9 +305,6 @@ def convert_checkpoint_from_megatron_to_transformers(args):
             " arguments to use this utility."
         )
 
-    # Create Transformers GPT2 config from Megatron-LM arguments
-    vocab_size = megatron_args.padded_vocab_size
-
     # params dtype
     if args.target_params_dtype == "fp16":
         dtype = torch.float16
@@ -334,7 +333,9 @@ def convert_checkpoint_from_megatron_to_transformers(args):
     config.num_key_value_heads = megatron_args.num_query_groups
     config.qk_layernorm = megatron_args.qk_layernorm
     config.rms_norm_eps = megatron_args.norm_epsilon
-    config.rope_scaling = megatron_args.use_rope_scaling
+    config.rope_scaling = (
+        None if megatron_args.use_rope_scaling is False else megatron_args.use_rope_scaling
+    )
     config.rope_theta = megatron_args.rotary_base
     config.tie_word_embeddings = not megatron_args.untie_embeddings_and_output_weights
 
@@ -472,7 +473,11 @@ def convert_checkpoint_from_megatron_to_transformers(args):
             if op_name + "." + weight_or_bias not in tensor_parallel_params_mg:
                 params = val.to(dtype)
             else:
-                dim = 1 if op_name in column_split_tensor_parallel_params_mg else 0
+                if weight_or_bias == "weight":
+                    dim = 1 if op_name in column_split_tensor_parallel_params_mg else 0
+                else:  # bias
+                    dim = 0
+
                 params = torch.cat(
                     [val]
                     + [
@@ -539,10 +544,47 @@ def convert_checkpoint_from_megatron_to_transformers(args):
                 output_state_dict[layer_name + f".self_attn.k_proj.weight"] = out_kv[0].clone()
                 output_state_dict[layer_name + f".self_attn.v_proj.weight"] = out_kv[1].clone()
 
+            elif (
+                op_name == "attention.linear_qkv" or op_name == "self_attention.linear_qkv"
+            ) and weight_or_bias == "bias":
+                all_qkv_biases = [
+                    i.reshape(
+                        num_groups // args.target_tensor_model_parallel_size,
+                        (heads // num_groups * hidden_size_per_head + 2 * hidden_size_per_head),
+                    )
+                    for i in torch.chunk(params, args.target_tensor_model_parallel_size, 0)
+                ]
+
+                split_size = heads // num_groups * hidden_size_per_head
+                all_q_biases = torch.cat([i[:, :split_size].reshape(-1) for i in all_qkv_biases])
+                all_kv_biases = torch.cat([i[:, split_size:].reshape(-1) for i in all_qkv_biases])
+
+                checkpoint_version = 3.0
+                out_q_bias = megatron_to_transformers_fix_query_key_value_ordering(
+                    all_q_biases.unsqueeze(-1), checkpoint_version, 1, heads, hidden_size_per_head
+                ).squeeze(-1)
+
+                out_kv_bias = megatron_to_transformers_fix_query_key_value_ordering(
+                    all_kv_biases.unsqueeze(-1),
+                    checkpoint_version,
+                    2,
+                    num_groups,
+                    hidden_size_per_head,
+                ).squeeze(-1)
+                out_kv_bias = torch.chunk(out_kv_bias, 2)
+
+                output_state_dict[layer_name + f".self_attn.q_proj.bias"] = out_q_bias.clone()
+                output_state_dict[layer_name + f".self_attn.k_proj.bias"] = out_kv_bias[0].clone()
+                output_state_dict[layer_name + f".self_attn.v_proj.bias"] = out_kv_bias[1].clone()
+
             # Transpose the weights.
             elif weight_or_bias == "weight":
                 out_name = megatron_to_transformers[op_name]
                 output_state_dict[layer_name + '.' + out_name + '.' + "weight"] = params.clone()
+            # Handle biases
+            elif weight_or_bias == "bias":
+                out_name = megatron_to_transformers[op_name]
+                output_state_dict[layer_name + '.' + out_name + '.' + "bias"] = params.clone()
 
     if config.num_hidden_layers != (layer_idx + 1):
         raise ValueError(f"Expected {config.num_hidden_layers} layers but found {layer_idx + 1}")
