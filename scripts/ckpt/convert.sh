@@ -5,17 +5,15 @@
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=4
 #SBATCH --ntasks-per-node=4
-#SBATCH --output=/p/project1/laionize/marianna/megatron/slurm-output/%x-%j.out
+#SBATCH --output=slurm-output/%x-%j.out
 
 
-CONDA_ENV="/p/project1/ccstdl/envs/marianna/bakllava"
-MINICONDA_PATH="/p/project1/ccstdl/nezhurina1/miniconda/miniconda"
-source ${MINICONDA_PATH}/bin/activate ${CONDA_ENV}
+source env
 
-MEGATRON_OPEN_SCI_PATH="/p/project1/laionize/marianna/megatron/Megatron-LM-Open-Sci"
-OPEN_SCI_HF_PATH="/p/project1/laionize/marianna/megatron/Open-Sci-hf"
 
-MEGATRON_PATH="/p/project1/laionize/marianna/megatron/Megatron-LM"
+MEGATRON_OPEN_SCI_PATH="Megatron-LM-Open-Sci" # Path to Megatron-LM-Open-Sci
+OPEN_SCI_HF_PATH="Open-Sci-hf" # Path to Open-Sci-hf
+MEGATRON_PATH="Megatron-LM" # Path to Megatron-LM
 export PYTHONPATH=${MEGATRON_PATH}:${PYTHONPATH:-}
 
 
@@ -44,8 +42,8 @@ WORLD_SIZE=$((TARGET_TP_SIZE * TARGET_PP_SIZE))
 # model config
 MODEL_NAME="open-sci-ref_model-1.7b_data-FineWeb-Edu-1.4T_samples-300B_global_bs-1008_context-4096_schedule-WSD_lr-4e-3_warmup-25000_machine-LEONARDO"
 ITER="0072661"
-LOAD_CHECKPOINT_PATH=/p/data1/mmlaion/shared/tmp/checkpoints_test/converted_torch/${MODEL_NAME}/iter_$ITER
-SAVE_CHECKPOINT_PATH=/p/data1/mmlaion/experiments/checkpoints/converted-hf/${MODEL_NAME}
+LOAD_CHECKPOINT_PATH=/converted_torch/${MODEL_NAME}/iter_$ITER # This is the path where the original checkpoint is stored
+SAVE_CHECKPOINT_PATH=/checkpoints/converted-hf/${MODEL_NAME} # This is the path where the converted checkpoint will be saved
 mkdir -p ${SAVE_CHECKPOINT_PATH}
 
 intermediate_size=8192
@@ -101,9 +99,6 @@ cp -r $OPEN_SCI_HF_PATH/sample/special_tokens_map.json "${SAVE_CHECKPOINT_PATH}"
 cp -r $OPEN_SCI_HF_PATH/sample/vocab.json "${SAVE_CHECKPOINT_PATH}"
 
 
-
-SOURCE_MODEL_PATH=/p/project1/laionize/marianna/megatron/Open-Sci-hf/sample
-
 mkdir -p ${SAVE_CHECKPOINT_PATH}
 
 python -u scripts/ckpt/mcore_to_hf_opensci.py \
@@ -120,8 +115,7 @@ python -u scripts/ckpt/mcore_to_hf_opensci.py \
 
 
 
-# Tokenizer
-
+# Test the converted model
 python -u scripts/ckpt/inference.py \
     --model_path "${SAVE_CHECKPOINT_PATH}" \
     --num_generations 5 \
