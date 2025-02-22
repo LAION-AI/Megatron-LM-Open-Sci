@@ -330,7 +330,7 @@ def convert_checkpoint_from_megatron_to_transformers(args):
     config.model_type = "opensci"
     config.num_attention_heads = megatron_args.num_attention_heads
     config.num_hidden_layers = megatron_args.num_layers
-    config.num_key_value_heads = megatron_args.num_query_groups
+    config.num_key_value_heads = args.num_key_value_heads if args.num_key_value_heads is not None else megatron_args.num_query_groups
     config.qk_layernorm = megatron_args.qk_layernorm
     config.rms_norm_eps = megatron_args.norm_epsilon
     config.rope_scaling = (
@@ -514,6 +514,8 @@ def convert_checkpoint_from_megatron_to_transformers(args):
                 op_name == "attention.linear_qkv" or op_name == "self_attention.linear_qkv"
             ) and weight_or_bias == "weight":
 
+                print(f"num_groups: {num_groups}, hidden_size_per_head: {hidden_size_per_head}")
+
                 all_qkvs = [
                     i.reshape(
                         num_groups // args.target_tensor_model_parallel_size,
@@ -547,6 +549,9 @@ def convert_checkpoint_from_megatron_to_transformers(args):
             elif (
                 op_name == "attention.linear_qkv" or op_name == "self_attention.linear_qkv"
             ) and weight_or_bias == "bias":
+                print("num_groups", num_groups)
+                print("hidden_size_per_head", hidden_size_per_head)
+
                 all_qkv_biases = [
                     i.reshape(
                         num_groups // args.target_tensor_model_parallel_size,
@@ -630,6 +635,11 @@ def convert_checkpoint_from_megatron_to_transformers(args):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--num_key_value_heads',
+        type=int,
+        default=None,
+    )
     parser = add_args(parser)
     args = parser.parse_args()
     if args.convert_checkpoint_from_megatron_to_transformers:
