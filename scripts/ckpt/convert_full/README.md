@@ -1,3 +1,6 @@
+# Overview
+
+This script automates the conversion of a distributed Megatron-LM checkpoint to a PyTorch format and then to Hugging Face Transformers format. 
 
 ## Dependencies
 
