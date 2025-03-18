@@ -313,13 +313,15 @@ def convert_checkpoint_from_megatron_to_transformers(args):
     else:
         dtype = torch.float32
 
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
+
     config = AutoConfig.from_pretrained(args.source_model, trust_remote_code=True)
     # Update config with Megatron args
-    config.architectures = ["OpensciForCausalLM"]
+    config.architectures = [args.architecture]
     config.attention_bias = megatron_args.add_qkv_bias
     config.attention_dropout = megatron_args.attention_dropout
-    config.bos_token_id = 0  # EleutherAI/gpt-neox-20b
-    config.eos_token_id = 0  # EleutherAI/gpt-neox-20b
+    config.bos_token_id = tokenizer.bos_token_id
+    config.eos_token_id = tokenizer.eos_token_id
     config.hidden_act = "silu"  # swiglu
     config.hidden_size = megatron_args.hidden_size
     config.initializer_range = megatron_args.init_method_std
@@ -327,7 +329,7 @@ def convert_checkpoint_from_megatron_to_transformers(args):
     config.layer_norm_eps = megatron_args.norm_epsilon
     config.max_position_embeddings = megatron_args.seq_length
     config.mlp_bias = megatron_args.add_bias_linear
-    config.model_type = "opensci"
+    config.model_type = args.model_type
     config.num_attention_heads = megatron_args.num_attention_heads
     config.num_hidden_layers = megatron_args.num_layers
     config.num_key_value_heads = args.num_key_value_heads if args.num_key_value_heads is not None else megatron_args.num_query_groups
@@ -354,6 +356,8 @@ def convert_checkpoint_from_megatron_to_transformers(args):
     # Embeddings
     print("Converting embeddings")
     tp_state_dicts = get_megatron_sharded_states(args, tp_size, pp_size, 0)
+
+    print("tp_state_dicts", tp_state_dicts[0]["model"].keys())
 
     # import pdb
     # pdb.set_trace()
@@ -515,6 +519,7 @@ def convert_checkpoint_from_megatron_to_transformers(args):
             ) and weight_or_bias == "weight":
 
                 print(f"num_groups: {num_groups}, hidden_size_per_head: {hidden_size_per_head}")
+                print(f"op_name: {op_name}, weight_or_bias: {weight_or_bias}")
 
                 all_qkvs = [
                     i.reshape(
@@ -551,6 +556,8 @@ def convert_checkpoint_from_megatron_to_transformers(args):
             ) and weight_or_bias == "bias":
                 print("num_groups", num_groups)
                 print("hidden_size_per_head", hidden_size_per_head)
+                print("op_name", op_name)
+                print("weight_or_bias", weight_or_bias)
 
                 all_qkv_biases = [
                     i.reshape(
@@ -639,6 +646,22 @@ def main():
         '--num_key_value_heads',
         type=int,
         default=None,
+    )
+    parser.add_argument(
+        '--architecture',
+        type=str,
+        default='OpenSciForCausalLM',
+    )
+    parser.add_argument(
+        '--model_type',
+        type=str,
+        default='opensci',
+    )
+
+    parser.add_argument(
+        '--tokenizer_name',
+        type=str,
+        default='EleutherAI/gpt-neox-20b',
     )
     parser = add_args(parser)
     args = parser.parse_args()
