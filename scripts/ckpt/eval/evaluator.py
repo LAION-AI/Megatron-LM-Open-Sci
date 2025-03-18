@@ -38,10 +38,9 @@ def main():
         sbatch_template = f.read()
         # escape ${} in f-strings with double curly braces
         sbatch_template = re.sub(r"\$\{(.+?)\}", r"\${{\1}}", sbatch_template).replace("\$", "$")
-       
     if "::" in checkpoints_dir_or_path:
         checkpoints = checkpoints_dir_or_path.split("::")
-    elif len(glob.glob(checkpoints_dir_or_path + "*.safetensors")) > 0:
+    elif len(glob.glob(os.path.join(checkpoints_dir_or_path,"*.safetensors"))) > 0:
         checkpoints = [checkpoints_dir_or_path]
     else:
         checkpoints = glob.glob(os.path.join(checkpoints_dir_or_path, "*"))
